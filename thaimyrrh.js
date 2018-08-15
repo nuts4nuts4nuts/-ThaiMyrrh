@@ -29,11 +29,27 @@ var config = {
 };
 
 var game = new Phaser.Game(config);
+var currentCameraY;
 
 var prevPointerY = 0;
 var gameHidden = false;
+var scrollingEnabled = true;
 
 var timer;
+
+var editGroup;
+var editWidth;
+var editOptionsX;
+var editOptionsWidth;
+var editTextHour;
+var editTextMinute;
+var editTextSecond;
+var scrollerHour;
+var scrollerMinute;
+var scrollerSecond;
+
+var fontSizeTime = Math.floor(64 * scaleFactor);
+var fontSizeText = Math.floor(32 * scaleFactor);
 
 function preload ()
 {
@@ -43,12 +59,74 @@ function preload ()
 
 function create ()
 {
-    var worldCenterX = window.innerWidth / 2;
-    var worldCenterY = window.innerHeight / 2;
-
     //Don't know why the actual centerY doesn't properly update?!?!?!?
-    var currentCameraY = this.cameras.main.centerY;
-    var canDrag = false;
+    currentCameraY = this.cameras.main.centerY;
+
+    var worldCenterX = window.innerWidth / 2;
+    var worldCenterY = currentCameraY;
+
+    editGroup = this.add.group();
+    function makeScroller(context, color, x, y, width, height)
+    {
+        var scroller = context.add.graphics();
+        scroller.fillStyle(color, 1);
+        scroller.fillRect(x, y, width, height);
+        scroller.setInteractive(new Phaser.Geom.Rectangle(x, y, width, height), Phaser.Geom.Rectangle.Contains);
+
+        function setValueBasedOnHeight (y, maxTime)
+        {
+            //Short circuit to imitate optional arg maxTime = 23
+            maxTime = maxTime || 23;
+
+            let heightFromBottom = height - y;
+            let portionOfHeight = heightFromBottom / height;
+            let portionOfMaxTime = portionOfHeight * maxTime;
+
+            scroller.setAlpha(portionOfHeight);
+        }
+
+        scroller.on("pointerdown", function (pointer) {
+            setValueBasedOnHeight(pointer.y);
+        }, this);
+        scroller.on("pointermove", function (pointer) {
+
+            if(pointer.isDown)
+            {
+                setValueBasedOnHeight(pointer.y);
+            }
+
+        }, this);
+
+        editGroup.add(scroller);
+
+        return scroller;
+    }
+
+    editWidth = window.innerWidth * 7 / 8;
+    editOptionsX = editWidth;
+    editOptionsWidth = window.innerWidth - editOptionsX;
+
+    scrollerHour   = makeScroller(this, 0xff0000, 0, 0, editWidth/3, window.innerHeight);
+    scrollerMinute = makeScroller(this, 0x00ff00, editWidth/3, 0, editWidth/3, window.innerHeight);
+    scrollerSecond = makeScroller(this, 0x0000ff, editWidth*2/3, 0, editWidth/3, window.innerHeight);
+    Phaser.Actions.SetAlpha(editGroup.getChildren(), 0);
+
+    //Floating edit text
+    editTextMinute = this.add.text(worldCenterX, worldCenterY, ':00:', {fontFamily: 'Arial', fontSize: fontSizeTime});
+    editTextMinute.setOrigin(0.5);
+    editTextMinute.setAlpha(0);
+
+    editTextHour = this.add.text(worldCenterX, worldCenterY, '00', {fontFamily: 'Arial', fontSize: fontSizeTime});
+    editTextHour.setOrigin(0.5);
+    editTextHour.setPosition(editTextHour.x - editTextHour.displayWidth / 2 - editTextMinute.displayWidth / 2, editTextHour.y);
+    editTextHour.setAlpha(0);
+
+    editTextSecond = this.add.text(worldCenterX, worldCenterY, '00', {fontFamily: 'Arial', fontSize: fontSizeTime});
+    editTextSecond.setOrigin(0.5);
+    editTextSecond.setPosition(editTextSecond.x + editTextSecond.displayWidth / 2 + editTextMinute.displayWidth / 2, editTextSecond.y);
+    editTextSecond.setAlpha(0);
+
+    editTextMinute.setText("00");
 
     timer = createTimer(worldCenterX, worldCenterY, scaleFactor, 0x0ff000, this);
 
@@ -57,11 +135,9 @@ function create ()
     // Set up input
     this.input.on("pointerdown", function (pointer) {
         prevPointerY = pointer.y;
-        canDrag = true;
     }, this);
-
     this.input.on("pointermove", function (pointer) {
-        if(canDrag && pointer.y != prevPointerY)
+        if(scrollingEnabled && pointer.isDown && pointer.y != prevPointerY)
         {
             let newToOldMouseY = prevPointerY - pointer.y;
             let newPos = currentCameraY + newToOldMouseY;
@@ -71,16 +147,13 @@ function create ()
             currentCameraY = newPos;
         }
     }, this);
-
     this.input.on("pointerup", function (pointer) {
-        canDrag = false;
-
         //Kinetic, baby
-        if(pointer.y != prevPointerY)
+        if(scrollingEnabled && pointer.y != prevPointerY)
         {
             let newToOldMouseY = prevPointerY - pointer.y;
-            let newPos = currentCameraY + newToOldMouseY * 8;
-            this.cameras.main.pan(worldCenterX, newPos, 200, interpMethod, true);
+            let newPos = currentCameraY + newToOldMouseY * 16;
+            this.cameras.main.pan(worldCenterX, newPos, 400, interpMethod, true);
 
             prevPointerY = pointer.y;
             currentCameraY = newPos;
@@ -88,10 +161,8 @@ function create ()
     }, this);
 }
 
-function update ()
+function setTimer(remaining, secondText, minuteText, hourText)
 {
-    let remaining = timer.getRemainingTime();
-
     //Ceiling so that 00;00 really is 0 and not 0 + some fractional part
     let prettySeconds = Math.ceil(remaining / 1000);
 
@@ -117,12 +188,12 @@ function update ()
     }
 
     let secondString = timeFormat(seconds);
-    let minuteString = ':' + timeFormat(minutes) + ':';
+    let minuteString = timeFormat(minutes);
     let hourString = timeFormat(hours);
 
-    timer.secondText.setText(secondString);
-    timer.minuteText.setText(minuteString);
-    timer.hourText.setText(hourString);
+    secondText.setText(secondString);
+    minuteText.setText(minuteString);
+    hourText.setText(hourString);
 
     let timeString = hourString + minuteString + secondString;
     if (minutes < 1) {
@@ -131,6 +202,15 @@ function update ()
     else if (hours < 1) {
         timeString = timeString.substr(3, 5);
     }
+
+    return timeString;
+}
+
+function update ()
+{
+    let remaining = timer.getRemainingTime();
+
+    let timeString = setTimer(remaining, timer.secondText, timer.minuteText, timer.hourText);
 
     if(timer.isStarted())
     {
@@ -151,8 +231,6 @@ function update ()
     {
         window.document.title = "Thai Myrrh";
     }
-
-    Phaser.Actions.SetTint(timer.group.getChildren(), 0x0000ff);
 }
 
 function createTimer(centerX, centerY, scaleFactor, color, context)
@@ -163,7 +241,6 @@ function createTimer(centerX, centerY, scaleFactor, color, context)
         ,pauseTime: 0
         ,isPaused: function () {
             return this.pauseTime > 0;
-            return something;
         }
         ,pauseToggle: function () {
             if(!this.isPaused())
@@ -219,24 +296,23 @@ function createTimer(centerX, centerY, scaleFactor, color, context)
         timer.pauseToggle();
     });
 
-    let fontSizeTime = Math.floor(64 * scaleFactor);
-    let fontSizeText = Math.floor(32 * scaleFactor);
+    function placeTimerText(timerText, posX, posY)
+    {
+        timerText.setOrigin(0.5);
+        timerText.setPosition(posX, posY);
+        timerText.setTint(color);
+        timer.group.add(timerText);
+    }
+
     timer.minuteText = context.add.text(centerX, centerY, ':00:', {fontFamily: 'Arial', fontSize: fontSizeTime});
-    timer.minuteText.setPosition(timer.minuteText.x - timer.minuteText.displayWidth / 2, timer.minuteText.y - timer.minuteText.displayHeight / 2);
-    timer.minuteText.setTint(color);
-    timer.group.add(timer.minuteText);
+    placeTimerText(timer.minuteText, centerX, centerY);
 
     timer.hourText = context.add.text(centerX, centerY, '00', {fontFamily: 'Arial', fontSize: fontSizeTime});
-    timer.hourText.setPosition(timer.hourText.x - timer.hourText.displayWidth - timer.minuteText.displayWidth / 2, timer.hourText.y - timer.hourText.displayHeight / 2);
-    timer.hourText.setTint(color);
-    timer.group.add(timer.hourText);
+    placeTimerText(timer.hourText, timer.hourText.x - timer.hourText.displayWidth/2 - timer.minuteText.displayWidth / 2, timer.hourText.y);
 
     timer.secondText = context.add.text(centerX, centerY, '00', {fontFamily: 'Arial', fontSize: fontSizeTime});
-    timer.secondText.setPosition(timer.secondText.x + timer.minuteText.displayWidth / 2, timer.secondText.y - timer.secondText.displayHeight / 2);
-    timer.secondText.setTint(color);
-    timer.group.add(timer.secondText);
+    placeTimerText(timer.secondText, timer.secondText.x + timer.secondText.displayWidth/2 + timer.minuteText.displayWidth / 2, timer.secondText.y);
 
-    //
     let timerEdgeBuffer = timer.bg.displayWidth / 30;
     let timerEdgeSafeWidth = centerX + timer.bg.displayWidth/ 2 - timerEdgeBuffer;
     let timerEdgeSafeHeight = centerY + timer.bg.displayHeight / 2 - timerEdgeBuffer;
@@ -254,41 +330,71 @@ function createTimer(centerX, centerY, scaleFactor, color, context)
     timer.editText.setPosition(timer.editText.x, timer.editText.y - timer.editText.displayHeight);
     timer.editText.setTint(color);
     timer.group.add(timer.editText);
+
     timer.editText.on('pointerdown', function () {
         //Start edit mode
-        let secondX = timer.secondText.x;
-        let secondY = timer.secondText.y;
 
-        let minuteX = timer.minuteText.x;
-        let minuteY = timer.minuteText.y;
+        scrollingEnabled = false;
+        function setupEditText(editText, textToMimic)
+        {
+            editText.setPosition(textToMimic.x, textToMimic.y);
+            editText.setAlpha(1);
+            editText.setTint(color)
+            textToMimic.setAlpha(0);
+        }
 
-        let hourX = timer.hourText.x;
-        let hourY = timer.hourText.y;
+        setupEditText(editTextSecond, timer.secondText);
+        setupEditText(editTextMinute, timer.minuteText);
+        setupEditText(editTextHour, timer.hourText);
+
+        setTimer(timer.getRemainingTime(), editTextSecond, editTextMinute, editTextHour);
+
+        let editCenterX = editWidth / 2;
 
         context.tweens.add({
-            targets: timer.secondText
-            ,x: centerX * 5 / 3 - timer.secondText.displayWidth / 2
-            ,y: centerY - timer.secondText.displayHeight / 2
+            targets: editTextSecond
+            ,x: editCenterX * 5 / 3
+            ,y: centerY
             ,duration: 500
             ,ease: "Cubic.easeOut"
         });
 
         context.tweens.add({
-            targets: timer.minuteText
-            ,x: centerX - timer.minuteText.displayWidth / 2
-            ,y: centerY - timer.minuteText.displayHeight / 2
+            targets: editTextMinute
+            ,x: editCenterX
+            ,y: centerY
             ,duration: 500
             ,ease: "Cubic.easeOut"
         });
 
         context.tweens.add({
-            targets: timer.hourText
-            ,x: centerX / 3 - timer.hourText.displayWidth / 2
-            ,y: centerY - timer.hourText.displayHeight / 2
+            targets: editTextHour
+            ,x: editCenterX / 3
+            ,y: centerY
             ,duration: 500
+            ,ease: "Cubic.easeOut"
+        });
+
+        [editTextSecond, editTextMinute, editTextHour].forEach(function (item)
+        {
+            item.setTint(0xffffff);
+        });
+
+        context.tweens.add({
+            targets: timer.group.getChildren()
+            ,alpha: 0
+            ,duration: 700
+            ,ease: "Cubic.easeOut"
+        });
+
+        context.tweens.add({
+            targets: editGroup.getChildren()
+            ,alpha: 1
+            ,duration: 700
             ,ease: "Cubic.easeOut"
         });
     });
+
 
     game.events.on('hidden', function(){
         gameHidden = true;
