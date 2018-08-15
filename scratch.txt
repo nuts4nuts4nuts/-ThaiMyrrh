@@ -1,6 +1,6 @@
 git status
 
-git commit
+git commit -m "Start scratch file for acme tools and notes"
 
 git pull
 
